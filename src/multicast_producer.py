@@ -11,13 +11,54 @@ import time
 from datetime import datetime
 
 
-def create_multicast_sender(group: str, port: int, ttl: int = 1) -> socket.socket:
+def list_available_interfaces():
+    """List all available network interfaces and their IP addresses."""
+    print("\nAvailable network interfaces:")
+    try:
+        import netifaces
+        for iface in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(iface)
+            if netifaces.AF_INET in addrs:
+                for addr in addrs[netifaces.AF_INET]:
+                    print(f"  {iface}: {addr['addr']}")
+    except ImportError:
+        print("  Install netifaces package for detailed interface information:")
+        print("  pip install netifaces")
+        # Fallback to basic interface listing
+        import subprocess
+        try:
+            if sys.platform == 'win32':
+                subprocess.run(['ipconfig'], check=True)
+            else:
+                subprocess.run(['ifconfig'], check=True)
+        except subprocess.CalledProcessError:
+            print("  Could not list interfaces. Please install netifaces package.")
+
+
+def create_multicast_sender(group: str, port: int, ttl: int = 1, interface: str = None) -> socket.socket:
     """Create and configure a socket for multicast sending."""
     # Create UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     
     # Set TTL
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
+    
+    # Set interface if specified
+    if interface:
+        try:
+            # Convert interface name to IP address
+            interface_ip = socket.gethostbyname(interface)
+            print(f"Using interface {interface} with IP {interface_ip}")
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
+        except socket.gaierror as e:
+            # If interface is already an IP address, use it directly
+            try:
+                print(f"Using interface IP {interface}")
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
+            except socket.error as e:
+                print(f"\nError setting multicast interface: {e}")
+                list_available_interfaces()
+                raise
     
     return sock
 
@@ -102,14 +143,24 @@ def main():
                        help='Time-to-live for multicast packets (default: 1)')
     parser.add_argument('--format', choices=['json', 'binary'], default='json',
                        help='Message format (default: json)')
+    parser.add_argument('--interface', type=str,
+                       help='Interface to send multicast packets from (IP address or interface name)')
+    parser.add_argument('--list-interfaces', action='store_true',
+                       help='List available network interfaces and exit')
     
     args = parser.parse_args()
     
+    if args.list_interfaces:
+        list_available_interfaces()
+        sys.exit(0)
+    
     try:
-        sock = create_multicast_sender(args.group, args.port, args.ttl)
+        sock = create_multicast_sender(args.group, args.port, args.ttl, args.interface)
         print(f"Sending multicast messages to {args.group}:{args.port}")
         print(f"Format: {args.format}")
         print(f"Interval: {args.interval} seconds")
+        if args.interface:
+            print(f"Interface: {args.interface}")
         print("Press Ctrl+C to stop")
         print("-" * 50)
         

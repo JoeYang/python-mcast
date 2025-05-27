@@ -44,7 +44,31 @@ class LatencyStats:
                 f"Messages: {self.message_count}")
 
 
-def create_multicast_socket(group: str, port: int) -> socket.socket:
+def list_available_interfaces():
+    """List all available network interfaces and their IP addresses."""
+    print("\nAvailable network interfaces:")
+    try:
+        import netifaces
+        for iface in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(iface)
+            if netifaces.AF_INET in addrs:
+                for addr in addrs[netifaces.AF_INET]:
+                    print(f"  {iface}: {addr['addr']}")
+    except ImportError:
+        print("  Install netifaces package for detailed interface information:")
+        print("  pip install netifaces")
+        # Fallback to basic interface listing
+        import subprocess
+        try:
+            if sys.platform == 'win32':
+                subprocess.run(['ipconfig'], check=True)
+            else:
+                subprocess.run(['ifconfig'], check=True)
+        except subprocess.CalledProcessError:
+            print("  Could not list interfaces. Please install netifaces package.")
+
+
+def create_multicast_socket(group: str, port: int, interface: str = None) -> socket.socket:
     """Create and configure a socket for multicast listening."""
     # Create UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -55,9 +79,34 @@ def create_multicast_socket(group: str, port: int) -> socket.socket:
     # Bind to the server address
     sock.bind(('', port))
     
+    # Set interface if specified
+    if interface:
+        try:
+            # Convert interface name to IP address
+            interface_ip = socket.gethostbyname(interface)
+            print(f"Using interface {interface} with IP {interface_ip}")
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
+        except socket.gaierror as e:
+            # If interface is already an IP address, use it directly
+            try:
+                print(f"Using interface IP {interface}")
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
+            except socket.error as e:
+                print(f"\nError setting multicast interface: {e}")
+                list_available_interfaces()
+                raise
+    
     # Tell the kernel to join a multicast group
-    mreq = struct.pack("4s4s", socket.inet_aton(group), socket.inet_aton('0.0.0.0'))
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    try:
+        mreq = struct.pack("4s4s", socket.inet_aton(group), socket.inet_aton('0.0.0.0'))
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    except socket.error as e:
+        print(f"\nError joining multicast group: {e}")
+        print(f"Group: {group}")
+        print(f"Port: {port}")
+        if interface:
+            print(f"Interface: {interface}")
+        raise
     
     return sock
 
@@ -83,14 +132,16 @@ def decode_binary_message(data: bytes) -> dict:
     }
 
 
-def listen_for_multicast(group: str, port: int, format_type: str = 'json') -> None:
+def listen_for_multicast(group: str, port: int, format_type: str = 'json', interface: str = None) -> None:
     """Listen for multicast messages and process them according to format."""
     try:
-        sock = create_multicast_socket(group, port)
+        sock = create_multicast_socket(group, port, interface)
         stats = LatencyStats()
         
         print(f"Listening for multicast messages on {group}:{port}")
         print(f"Format: {format_type}")
+        if interface:
+            print(f"Interface: {interface}")
         print("Press Ctrl+C to stop")
         print("-" * 50)
         
@@ -173,9 +224,18 @@ def main():
     parser.add_argument('port', type=int, help='Port number to listen on')
     parser.add_argument('--format', choices=['json', 'binary'], default='json',
                        help='Message format (default: json)')
+    parser.add_argument('--interface', type=str,
+                       help='Interface to listen for multicast packets on (IP address or interface name)')
+    parser.add_argument('--list-interfaces', action='store_true',
+                       help='List available network interfaces and exit')
     
     args = parser.parse_args()
-    listen_for_multicast(args.group, args.port, args.format)
+    
+    if args.list_interfaces:
+        list_available_interfaces()
+        sys.exit(0)
+    
+    listen_for_multicast(args.group, args.port, args.format, args.interface)
 
 
 if __name__ == '__main__':
