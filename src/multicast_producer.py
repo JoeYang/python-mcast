@@ -145,14 +145,14 @@ def main():
                        help='Message format (default: json)')
     parser.add_argument('--interface', type=str,
                        help='Interface to send multicast packets from (IP address or interface name)')
-    parser.add_argument('--list-interfaces', action='store_true',
-                       help='List available network interfaces and exit')
+    # parser.add_argument('--list-interfaces', action='store_true',
+    #                    help='List available network interfaces and exit')
     
     args = parser.parse_args()
     
-    if args.list_interfaces:
-        list_available_interfaces()
-        sys.exit(0)
+    # if args.list_interfaces:
+    #     list_available_interfaces()
+    #     sys.exit(0)
     
     try:
         sock = create_multicast_sender(args.group, args.port, args.ttl, args.interface)
